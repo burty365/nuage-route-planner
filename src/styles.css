@@ -1,158 +1,90 @@
-/* =========================
-NU AGE DARK THEME
-========================= */
-
-* {
-  box-sizing: border-box;
-}
+/* ===== NU AGE DARK THEME ===== */
 
 body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-  background: #071535;
-  color: white;
+  margin: 0 !important;
+  font-family: Arial, sans-serif !important;
+  background: #071535 !important;
+  color: white !important;
 }
 
-/* App container */
+/* main app background */
 
-.app {
-  max-width: 1300px;
-  margin: auto;
-  padding: 30px;
+#root {
+  background: #071535 !important;
+  min-height: 100vh !important;
 }
 
-/* Headings */
+/* panels */
+
+div {
+  border-radius: 12px;
+}
+
+/* cards / panels */
+
+div[class*="panel"],
+div[class*="box"],
+div[class*="card"] {
+  background: #102449 !important;
+  border: 1px solid #1a315f !important;
+}
+
+/* text */
 
 h1, h2, h3 {
-  color: white;
+  color: white !important;
 }
 
-p, label, small {
-  color: #b8c4d9;
+p, label, span, small {
+  color: #b8c4d9 !important;
 }
 
-/* Panels / cards */
-
-.card,
-.panel,
-.section,
-.box {
-  background: #102449;
-  border: 1px solid #1a315f;
-  border-radius: 14px;
-  padding: 18px;
-}
-
-/* Inputs */
+/* inputs */
 
 input,
 select,
 textarea {
-  background: #0a1b38;
-  color: white;
-  border: 1px solid #2a4474;
-  border-radius: 10px;
-  padding: 10px;
-  width: 100%;
+  background: #0a1b38 !important;
+  color: white !important;
+  border: 1px solid #2a4474 !important;
+  border-radius: 10px !important;
+  padding: 10px !important;
 }
 
 input::placeholder {
   color: #8fa3c7;
 }
 
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: #6cc04a;
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(108,192,74,0.25);
-}
-
-/* Buttons */
+/* buttons */
 
 button {
-  border: none;
-  border-radius: 10px;
-  padding: 10px 16px;
+  border: none !important;
+  border-radius: 10px !important;
+  padding: 10px 16px !important;
   cursor: pointer;
-  font-weight: 500;
-  transition: 0.2s;
 }
 
-/* Primary buttons */
+/* green buttons */
 
-button.primary,
-button.build-route,
-button.save-postcode,
-button.apply-btn {
-  background: #6cc04a;
-  color: white;
+button:hover {
+  opacity: 0.9;
 }
 
-button.primary:hover,
-button.build-route:hover,
-button.save-postcode:hover,
-button.apply-btn:hover {
-  background: #5daf3d;
+button,
+button:active {
+  background: #6cc04a !important;
+  color: white !important;
 }
 
-/* Secondary buttons */
+/* remove buttons */
 
-button.secondary,
-button.remove-btn {
-  background: #334766;
-  color: white;
+button.remove,
+button[title="Remove"] {
+  background: #334766 !important;
 }
 
-button.secondary:hover,
-button.remove-btn:hover {
-  background: #40567a;
-}
-
-/* Route stop rows */
-
-.stop-row {
-  background: #102449;
-  border: 1px solid #1a315f;
-  border-radius: 12px;
-  padding: 10px;
-  margin-bottom: 10px;
-}
-
-/* Summary panels */
-
-.summary-box,
-.map-box,
-.order-box {
-  background: #102449;
-  border: 1px solid #1a315f;
-  border-radius: 14px;
-  padding: 18px;
-}
-
-/* Drag handle */
-
-.drag-handle {
-  cursor: grab;
-  color: #8fa3c7;
-}
-
-/* Checkbox */
+/* checkboxes */
 
 input[type="checkbox"] {
   accent-color: #6cc04a;
-}
-
-/* Grid layout */
-
-.two-col {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 24px;
-}
-
-@media (max-width: 900px) {
-  .two-col {
-    grid-template-columns: 1fr;
-  }
 }
