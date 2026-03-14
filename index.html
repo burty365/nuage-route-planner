@@ -5,10 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Nu Age Gmail Job Extractor</title>
   <style>
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -17,40 +14,23 @@
       min-height: 100vh;
       padding: 30px 20px 50px;
     }
-
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
-
-    h1 {
-      margin: 0 0 10px;
-      text-align: center;
-      font-size: 34px;
-    }
-
-    .sub {
-      text-align: center;
-      color: #b8c4d9;
-      margin-bottom: 30px;
-    }
-
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { margin: 0 0 10px; text-align: center; font-size: 34px; }
+    .sub { text-align: center; color: #b8c4d9; margin-bottom: 30px; }
     .card {
       background: #102449;
       border: 1px solid #1a315f;
       border-radius: 16px;
       padding: 20px;
       margin-bottom: 20px;
-      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.2);
     }
-
     label {
       display: block;
       margin-bottom: 10px;
       font-weight: bold;
       color: white;
     }
-
     textarea {
       width: 100%;
       min-height: 280px;
@@ -63,23 +43,17 @@
       font-size: 14px;
       outline: none;
     }
-
-    textarea::placeholder {
-      color: #8fa3c7;
-    }
-
+    textarea::placeholder { color: #8fa3c7; }
     textarea:focus {
       border-color: #6cc04a;
-      box-shadow: 0 0 0 3px rgba(108, 192, 74, 0.2);
+      box-shadow: 0 0 0 3px rgba(108,192,74,0.2);
     }
-
     .btn-row {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
       margin-top: 16px;
     }
-
     button {
       border: none;
       border-radius: 12px;
@@ -89,31 +63,15 @@
       cursor: pointer;
       transition: 0.2s ease;
     }
-
-    .btn-primary {
-      background: #6cc04a;
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: #5daf3d;
-    }
-
-    .btn-secondary {
-      background: #334766;
-      color: white;
-    }
-
-    .btn-secondary:hover {
-      background: #40567a;
-    }
-
+    .btn-primary { background: #6cc04a; color: white; }
+    .btn-primary:hover { background: #5daf3d; }
+    .btn-secondary { background: #334766; color: white; }
+    .btn-secondary:hover { background: #40567a; }
     .notice {
       color: #b8c4d9;
       font-size: 14px;
       margin-top: 10px;
     }
-
     .warning-box {
       background: #3a1d1d;
       border: 1px solid #7a2f2f;
@@ -123,7 +81,6 @@
       color: #ffd7d7;
       white-space: pre-wrap;
     }
-
     .summary-box {
       background: #0a1b38;
       border: 1px solid #1a315f;
@@ -133,18 +90,13 @@
       white-space: pre-wrap;
       line-height: 1.5;
     }
-
     .customer-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 20px;
       margin-top: 20px;
     }
-
-    .field {
-      margin-bottom: 10px;
-    }
-
+    .field { margin-bottom: 10px; }
     .field-title {
       font-size: 12px;
       text-transform: uppercase;
@@ -152,26 +104,22 @@
       margin-bottom: 4px;
       letter-spacing: 0.5px;
     }
-
     .field-value {
       color: white;
       white-space: pre-wrap;
       word-break: break-word;
     }
-
     .customer-card {
       background: #102449;
       border: 1px solid #1a315f;
       border-radius: 16px;
       padding: 18px;
     }
-
     .customer-title {
       margin: 0 0 14px;
       font-size: 22px;
       color: white;
     }
-
     .output-box {
       background: #0a1b38;
       border: 1px solid #1a315f;
@@ -183,18 +131,14 @@
       margin-top: 14px;
       min-height: 180px;
     }
-
     .small-row {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
       margin-top: 12px;
     }
-
     @media (max-width: 900px) {
-      .customer-grid {
-        grid-template-columns: 1fr;
-      }
+      .customer-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -247,11 +191,8 @@
       document.getElementById("threadSummary").innerText = threadSummary;
       renderCustomerCards(customerRecords);
 
-      if (warnings.length) {
-        showWarnings(warnings);
-      } else {
-        hideWarnings();
-      }
+      if (warnings.length) showWarnings(warnings);
+      else hideWarnings();
     }
 
     function cleanThread(text) {
@@ -296,9 +237,7 @@
         });
       });
 
-      if (records.length > 1) {
-        warnings.push("Multiple customer thread - create separate records.");
-      }
+      if (records.length > 1) warnings.push("Multiple customer thread - create separate records.");
 
       return records;
     }
@@ -327,22 +266,6 @@
     function extractDistinctNames(text) {
       const names = [];
 
-      const patterns = [
-        /Name:\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g,
-        /(?:Thank you|Thanks|Cheers|Kind regards|All the best|Regards)[,\s\n]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g,
-        /^(?:Hi|Hello|Dear)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/gmi
-      ];
-
-      patterns.forEach(pattern => {
-        let match;
-        while ((match = pattern.exec(text)) !== null) {
-          const name = normaliseName(match[1]);
-          if (isLikelyCustomerName(name) && !isStaffName(name)) {
-            names.push(name);
-          }
-        }
-      });
-
       const explicitNames = [
         "James Lagneau",
         "Rob Boston",
@@ -354,6 +277,23 @@
           names.push(name);
         }
       });
+
+      const websiteNameMatch = text.match(/Name:\s*([^\n]+)/i);
+      if (websiteNameMatch) {
+        const websiteName = normaliseName(websiteNameMatch[1]);
+        if (isLikelyCustomerName(websiteName) && !isStaffName(websiteName)) {
+          names.push(websiteName);
+        }
+      }
+
+      const emailNamePattern = /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*</gm;
+      let match;
+      while ((match = emailNamePattern.exec(text)) !== null) {
+        const name = normaliseName(match[1]);
+        if (isLikelyCustomerName(name) && !isStaffName(name)) {
+          names.push(name);
+        }
+      }
 
       return [...new Set(names)].map(n => n.trim()).filter(name => !isStaffName(name));
     }
@@ -398,17 +338,17 @@
       const addresses = extractAddresses(text, customerName);
       const postcodes = extractPostcodes(text);
 
-      let selectedEmail = pickBestEmailForCustomer(customerName, customerEmails, text);
-      let selectedPhone = pickBestPhoneForCustomer(customerName, customerPhones, text);
-      let selectedAddress = pickBestAddressForCustomer(customerName, addresses, text);
-      let selectedPostcode = selectedAddress
+      const selectedEmail = pickBestEmailForCustomer(customerName, customerEmails, text);
+      const selectedPhone = pickBestPhoneForCustomer(customerName, customerPhones, text);
+      const selectedAddress = pickBestAddressForCustomer(customerName, addresses, text);
+      const selectedPostcode = selectedAddress
         ? extractPostcodeFromAddress(selectedAddress) || postcodes[0] || ""
         : postcodes[0] || "";
 
-      const scopeLines = extractScopeLines(text, customerName);
-      const prices = extractPrices(text, customerName);
-      const status = detectStatus(text, customerName);
-      const updates = extractUpdates(text, customerName);
+      const scopeLines = extractScopeLines(text);
+      const prices = extractPrices(text);
+      const status = detectStatus(text);
+      const updates = extractUpdates(text);
 
       if (!selectedEmail) warnings.push(`${customerName}: no customer email found.`);
       if (!selectedPhone) warnings.push(`${customerName}: no customer phone found.`);
@@ -469,13 +409,11 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
 
       return unique(matches.filter(email => {
         const lower = email.toLowerCase();
-
         if (lower.includes("@nuageplumbing.com")) return false;
         if (lower.includes("hello@")) return false;
         if (lower.includes("admin@")) return false;
         if (lower.includes("kieran@")) return false;
         if (lower.includes("nick@")) return false;
-
         return true;
       }));
     }
@@ -484,12 +422,10 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       const matches = text.match(/(\+44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{3}|\b0\d{10,11}\b/g) || [];
 
       return unique(
-        matches
-          .map(cleanPhone)
-          .filter(phone => {
-            const compact = phone.replace(/\s+/g, "");
-            return !["02476950000", "07535184739", "07838267960"].includes(compact);
-          })
+        matches.map(cleanPhone).filter(phone => {
+          const compact = phone.replace(/\s+/g, "");
+          return !["02476950000", "07535184739", "07838267960"].includes(compact);
+        })
       );
     }
 
@@ -498,7 +434,6 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
     }
 
     function pickBestEmailForCustomer(customerName, emails, text) {
-      const lowerText = text.toLowerCase();
       const firstName = customerName.split(" ")[0]?.toLowerCase() || "";
       const surname = customerName.split(" ").slice(-1)[0]?.toLowerCase() || "";
 
@@ -511,7 +446,7 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       return emails[0] || "";
     }
 
-    function pickBestPhoneForCustomer(customerName, phones, text) {
+    function pickBestPhoneForCustomer(customerName, phones) {
       return phones[0] || "";
     }
 
@@ -551,13 +486,8 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       const surname = customerName.split(" ").slice(-1)[0]?.toLowerCase() || "";
 
       for (const address of addresses) {
-        const lowerAddress = address.toLowerCase();
-        if (firstName && lowerText.includes(firstName) && lowerAddress) {
-          if (lowerText.includes(address.toLowerCase())) return address;
-        }
-        if (surname && lowerText.includes(surname) && lowerAddress) {
-          if (lowerText.includes(address.toLowerCase())) return address;
-        }
+        if (firstName && lowerText.includes(firstName) && lowerText.includes(address.toLowerCase())) return address;
+        if (surname && lowerText.includes(surname) && lowerText.includes(address.toLowerCase())) return address;
       }
 
       return addresses[0] || "";
@@ -582,7 +512,7 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       return match ? match[0].toUpperCase() : "";
     }
 
-    function extractScopeLines(text, customerName) {
+    function extractScopeLines(text) {
       const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
       const scope = [];
 
@@ -631,12 +561,12 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       return [...new Set(scope)].slice(0, 12);
     }
 
-    function extractPrices(text, customerName) {
+    function extractPrices(text) {
       const matches = text.match(/£\s?\d[\d,]*(?:\.\d{2})?\s*(?:\+\s*VAT|\+ Vat|\+ vat)?/g) || [];
       return unique(matches.map(m => m.replace(/\s+/g, " ").trim()));
     }
 
-    function detectStatus(text, customerName) {
+    function detectStatus(text) {
       const lower = text.toLowerCase();
 
       if (/booked in|that is booked in|appointment booked|availability on/i.test(text)) {
@@ -654,7 +584,7 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       return "Status unclear";
     }
 
-    function extractUpdates(text, customerName) {
+    function extractUpdates(text) {
       const updates = [];
       const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
@@ -672,7 +602,7 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
       return unique(updates);
     }
 
-    function buildThreadSummary(text, customerRecords, warnings) {
+    function buildThreadSummary(text, customerRecords) {
       const lines = [];
       lines.push(`Customers detected: ${customerRecords.length}`);
 
@@ -718,52 +648,15 @@ ${summaryLines.length ? summaryLines.join("\n") : "No clear scope found in email
 
         card.innerHTML = `
           <h2 class="customer-title">Customer ${index + 1}: ${escapeHtml(record.name)}</h2>
-
-          <div class="field">
-            <div class="field-title">Email</div>
-            <div class="field-value">${escapeHtml(record.email || "-")}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Phone</div>
-            <div class="field-value">${escapeHtml(record.phone || "-")}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Address</div>
-            <div class="field-value">${escapeHtml(record.address || "-")}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Postcode</div>
-            <div class="field-value">${escapeHtml(record.postcode || "-")}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Status</div>
-            <div class="field-value">${escapeHtml(record.status || "-")}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Scope of Works</div>
-            <div class="field-value">${escapeHtml(scopeText)}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Prices Found</div>
-            <div class="field-value">${escapeHtml(pricesText)}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">Updates</div>
-            <div class="field-value">${escapeHtml(updatesText)}</div>
-          </div>
-
-          <div class="field">
-            <div class="field-title">CommuSoft Output</div>
-            <div class="output-box">${escapeHtml(record.commusoftOutput)}</div>
-          </div>
-
+          <div class="field"><div class="field-title">Email</div><div class="field-value">${escapeHtml(record.email || "-")}</div></div>
+          <div class="field"><div class="field-title">Phone</div><div class="field-value">${escapeHtml(record.phone || "-")}</div></div>
+          <div class="field"><div class="field-title">Address</div><div class="field-value">${escapeHtml(record.address || "-")}</div></div>
+          <div class="field"><div class="field-title">Postcode</div><div class="field-value">${escapeHtml(record.postcode || "-")}</div></div>
+          <div class="field"><div class="field-title">Status</div><div class="field-value">${escapeHtml(record.status || "-")}</div></div>
+          <div class="field"><div class="field-title">Scope of Works</div><div class="field-value">${escapeHtml(scopeText)}</div></div>
+          <div class="field"><div class="field-title">Prices Found</div><div class="field-value">${escapeHtml(pricesText)}</div></div>
+          <div class="field"><div class="field-title">Updates</div><div class="field-value">${escapeHtml(updatesText)}</div></div>
+          <div class="field"><div class="field-title">CommuSoft Output</div><div class="output-box">${escapeHtml(record.commusoftOutput)}</div></div>
           <div class="small-row">
             <button class="btn-primary" onclick="copyCustomerOutput(${index})">Copy CommuSoft Output</button>
           </div>
