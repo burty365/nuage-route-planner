@@ -1,59 +1,78 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   MapContainer,
-  TileLayer,
   Marker,
   Polyline,
+  TileLayer,
   Tooltip,
+  useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "./styles.css";
 
 type StopRow = {
+  id: string;
   postcode: string;
   locked: boolean;
 };
 
 type SavedLocation = {
+  id: string;
   name: string;
   postcode: string;
 };
 
-type GeoStop = {
+type GeoPoint = {
+  id: string;
   postcode: string;
   lat: number;
   lon: number;
-  label: string;
-  locked?: boolean;
-  rowIndex?: number;
+  locked: boolean;
+  inputIndex: number;
 };
 
-type RouteLeg = {
-  from: string;
-  to: string;
-  distanceMiles: number;
-  travelMinutes: number;
+type OrderedStop = GeoPoint & {
+  orderNumber: number;
+  arrivalTime: string;
+  travelMinutesFromPrevious: number;
+  distanceMilesFromPrevious: number;
+};
+
+type RouteSummary = {
+  totalMiles: number;
+  totalTravelMinutes: number;
+  longestDriveMinutes: number;
+  legsCount: number;
 };
 
 const TRAFFIC_BUFFER = 1.15;
 const MAX_STOPS = 8;
+const DEFAULT_START = "CV6 4AZ";
+const DEFAULT_FINISH = "B37 7SP";
+const STORAGE_STOPS = "nuage-route-planner-stops-v2";
+const STORAGE_SAVED = "nuage-route-planner-saved-v2";
+const STORAGE_START = "nuage-route-planner-start-v2";
+const STORAGE_FINISH = "nuage-route-planner-finish-v2";
+const STORAGE_TIME = "nuage-route-planner-time-v2";
+const STORAGE_CACHE = "nuage-route-planner-geo-cache-v2";
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
 
 function cleanPostcode(value: string) {
   return value.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
 function splitPastedPostcodes(text: string) {
-  return [
-    ...new Set(
-      text
-        .split(/\n|,|;/)
-        .map(cleanPostcode)
-        .filter(Boolean)
-    ),
-  ];
+  return [...new Set(text.split(/[\n,;]+/).map(cleanPostcode).filter(Boolean))];
 }
 
-function haversineMiles(a: GeoStop, b: GeoStop) {
+function haversineMiles(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number }
+) {
   const R = 3958.8;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
@@ -68,1244 +87,821 @@ function haversineMiles(a: GeoStop, b: GeoStop) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+function estimateTravelMinutes(miles: number) {
+  const averageMph = 28;
+  return Math.max(3, Math.round((miles / averageMph) * 60 * TRAFFIC_BUFFER));
+}
+
 function formatDuration(minutes: number) {
   const rounded = Math.round(minutes);
   const hours = Math.floor(rounded / 60);
   const mins = rounded % 60;
-
   if (hours && mins) return `${hours}h ${mins}m`;
   if (hours) return `${hours}h`;
   return `${mins}m`;
 }
 
 function getTravelColour(minutes: number) {
-  if (minutes <= 10) return "#16a34a";
-  if (minutes <= 20) return "#f97316";
-  return "#dc2626";
+  if (minutes <= 10) return "#6cc04a";
+  if (minutes <= 20) return "#ff9f43";
+  return "#ff5e57";
 }
 
 function getPinColour(index: number) {
   const colours = [
-    "#2563eb",
-    "#16a34a",
-    "#f97316",
-    "#dc2626",
-    "#7c3aed",
-    "#0891b2",
-    "#ca8a04",
-    "#be185d",
+    "#6cc04a",
+    "#4da3ff",
+    "#ff9f43",
+    "#ff5e57",
+    "#9b6dff",
+    "#2ed3b7",
+    "#f6c445",
+    "#ff7aa2",
   ];
-
   return colours[index % colours.length];
 }
 
-function createEmptyRows(count = 4): StopRow[] {
-  return Array.from({ length: count }, () => ({ postcode: "", locked: false }));
+function createStopRows(count = 4): StopRow[] {
+  return Array.from({ length: count }, () => ({
+    id: uid(),
+    postcode: "",
+    locked: false,
+  }));
 }
 
-function shuffleArray<T>(items: T[], seed: number) {
-  const copy = [...items];
-  let randomSeed = seed;
-
-  function nextRandom() {
-    randomSeed = (randomSeed * 9301 + 49297) % 233280;
-    return randomSeed / 233280;
-  }
-
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(nextRandom() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-
-  return copy;
+function addMinutes(timeString: string, minutesToAdd: number) {
+  const [h, m] = timeString.split(":").map(Number);
+  const total = h * 60 + m + minutesToAdd;
+  const safe = ((total % 1440) + 1440) % 1440;
+  const hours = Math.floor(safe / 60)
+    .toString()
+    .padStart(2, "0");
+  const mins = (safe % 60).toString().padStart(2, "0");
+  return `${hours}:${mins}`;
 }
 
-function routeCost(
-  route: GeoStop[],
-  startStop: GeoStop | null,
-  finishStop: GeoStop | null
+function loadJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJSON(key: string, value: unknown) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+async function geocodePostcode(
+  postcode: string,
+  cache: Record<string, { lat: number; lon: number }>
 ) {
-  let cost = 0;
-  if (!route.length) return cost;
+  const cleaned = cleanPostcode(postcode);
+  if (!cleaned) throw new Error("Blank postcode");
+  if (cache[cleaned]) return cache[cleaned];
 
-  if (startStop) {
-    cost += haversineMiles(startStop, route[0]);
-  }
-
-  for (let i = 1; i < route.length; i += 1) {
-    cost += haversineMiles(route[i - 1], route[i]);
-  }
-
-  if (finishStop) {
-    cost += haversineMiles(route[route.length - 1], finishStop);
-  }
-
-  return cost;
-}
-
-function twoOptImprove(
-  route: GeoStop[],
-  startStop: GeoStop | null,
-  finishStop: GeoStop | null
-) {
-  if (route.length < 4) return route;
-
-  const working = [...route];
-  const lockedSet = new Set(
-    working
-      .filter((stop) => stop.locked && typeof stop.rowIndex === "number")
-      .map((stop) => stop.rowIndex as number)
-  );
-
-  let improved = true;
-  let bestCost = routeCost(working, startStop, finishStop);
-
-  while (improved) {
-    improved = false;
-
-    for (let i = 0; i < working.length - 1; i += 1) {
-      for (let k = i + 1; k < working.length; k += 1) {
-        const affectedLocked = Array.from(
-          { length: k - i + 1 },
-          (_, offset) => i + offset
-        ).some((index) => lockedSet.has(index));
-
-        if (affectedLocked) continue;
-
-        const candidate = [
-          ...working.slice(0, i),
-          ...working.slice(i, k + 1).reverse(),
-          ...working.slice(k + 1),
-        ];
-
-        const candidateCost = routeCost(candidate, startStop, finishStop);
-        if (candidateCost + 0.001 < bestCost) {
-          bestCost = candidateCost;
-          working.splice(0, working.length, ...candidate);
-          improved = true;
-        }
-      }
-    }
-  }
-
-  return working;
-}
-
-async function geocodePostcode(postcode: string): Promise<GeoStop> {
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=gb&limit=1&q=${encodeURIComponent(
-    postcode
+    cleaned
   )}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
 
   if (!res.ok) {
-    throw new Error(`Could not look up ${postcode}`);
+    throw new Error(`Failed to geocode ${cleaned}`);
   }
 
   const data = await res.json();
 
-  if (!Array.isArray(data) || data.length === 0) {
-    throw new Error(`Postcode not found: ${postcode}`);
+  if (!data.length) {
+    throw new Error(`No result found for ${cleaned}`);
   }
 
-  return {
-    postcode,
+  const point = {
     lat: Number(data[0].lat),
     lon: Number(data[0].lon),
-    label: data[0].display_name,
   };
+
+  cache[cleaned] = point;
+  saveJSON(STORAGE_CACHE, cache);
+  return point;
 }
 
-async function getDriveLeg(a: GeoStop, b: GeoStop): Promise<RouteLeg> {
-  const fallbackMiles = haversineMiles(a, b);
-  const fallbackMinutes = fallbackMiles * 3.2 * TRAFFIC_BUFFER;
-
-  try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`;
-    const res = await fetch(url);
-
-    if (!res.ok) {
-      return {
-        from: a.postcode,
-        to: b.postcode,
-        distanceMiles: fallbackMiles,
-        travelMinutes: fallbackMinutes,
-      };
-    }
-
-    const data = await res.json();
-    const firstRoute = data?.routes?.[0];
-
-    if (!firstRoute) {
-      return {
-        from: a.postcode,
-        to: b.postcode,
-        distanceMiles: fallbackMiles,
-        travelMinutes: fallbackMinutes,
-      };
-    }
-
-    return {
-      from: a.postcode,
-      to: b.postcode,
-      distanceMiles: firstRoute.distance / 1609.344,
-      travelMinutes: (firstRoute.duration / 60) * TRAFFIC_BUFFER,
-    };
-  } catch {
-    return {
-      from: a.postcode,
-      to: b.postcode,
-      distanceMiles: fallbackMiles,
-      travelMinutes: fallbackMinutes,
-    };
-  }
-}
-
-function buildGreedyOrder(
-  jobs: GeoStop[],
-  startStop: GeoStop | null,
-  finishStop: GeoStop | null,
-  seed = 1
+function nearestNeighbour(
+  current: { lat: number; lon: number },
+  stops: GeoPoint[],
+  anchor?: { lat: number; lon: number } | null
 ) {
-  if (!jobs.length) return [] as GeoStop[];
+  const remaining = [...stops];
+  const output: GeoPoint[] = [];
+  let currentPoint = { ...current };
 
-  const orderedJobs = new Array(jobs.length).fill(null) as (GeoStop | null)[];
-  const used = new Set<string>();
-
-  jobs.forEach((job) => {
-    if (
-      job.locked &&
-      typeof job.rowIndex === "number" &&
-      job.rowIndex >= 0 &&
-      job.rowIndex < jobs.length
-    ) {
-      orderedJobs[job.rowIndex] = job;
-      used.add(job.postcode);
-    }
-  });
-
-  let current = startStop || null;
-
-  for (let position = 0; position < jobs.length; position += 1) {
-    if (orderedJobs[position]) {
-      current = orderedJobs[position];
-      continue;
-    }
-
-    let remaining = jobs.filter((job) => !used.has(job.postcode));
-    if (!remaining.length) break;
-
-    remaining = shuffleArray(remaining, seed + position);
-
-    let best = remaining[0];
+  while (remaining.length) {
+    let bestIndex = 0;
     let bestScore = Number.POSITIVE_INFINITY;
 
-    for (const candidate of remaining) {
-      const fromDistance = current ? haversineMiles(current, candidate) : 0;
-      const toFinishDistance = finishStop
-        ? haversineMiles(candidate, finishStop) * 0.35
-        : 0;
-      const score = fromDistance + toFinishDistance;
+    remaining.forEach((stop, index) => {
+      const firstLeg = haversineMiles(currentPoint, stop);
+      const anchorLeg = anchor ? haversineMiles(stop, anchor) * 0.35 : 0;
+      const score = firstLeg + anchorLeg;
 
       if (score < bestScore) {
         bestScore = score;
-        best = candidate;
+        bestIndex = index;
       }
-    }
+    });
 
-    orderedJobs[position] = best;
-    used.add(best.postcode);
-    current = best;
+    const chosen = remaining.splice(bestIndex, 1)[0];
+    output.push(chosen);
+    currentPoint = { lat: chosen.lat, lon: chosen.lon };
   }
 
-  return orderedJobs.filter(Boolean) as GeoStop[];
+  return output;
 }
 
-function buildBestJobOrder(
-  jobs: GeoStop[],
-  startStop: GeoStop | null,
-  finishStop: GeoStop | null,
-  seed = 1
+function optimiseWithLockedStops(
+  rawStops: GeoPoint[],
+  start: { lat: number; lon: number },
+  finish: { lat: number; lon: number }
 ) {
-  if (!jobs.length) return [] as GeoStop[];
+  const ordered: GeoPoint[] = new Array(rawStops.length);
+  let currentPoint = start;
+  let i = 0;
 
-  let bestRoute = buildGreedyOrder(jobs, startStop, finishStop, seed);
-  bestRoute = twoOptImprove(bestRoute, startStop, finishStop);
-  let bestCost = routeCost(bestRoute, startStop, finishStop);
-
-  for (let attempt = 1; attempt < 12; attempt += 1) {
-    const candidateSeed = seed + attempt * 17;
-    let candidate = buildGreedyOrder(
-      jobs,
-      startStop,
-      finishStop,
-      candidateSeed
-    );
-    candidate = twoOptImprove(candidate, startStop, finishStop);
-    const candidateCost = routeCost(candidate, startStop, finishStop);
-
-    if (candidateCost < bestCost) {
-      bestRoute = candidate;
-      bestCost = candidateCost;
+  while (i < rawStops.length) {
+    if (rawStops[i].locked) {
+      ordered[i] = rawStops[i];
+      currentPoint = { lat: rawStops[i].lat, lon: rawStops[i].lon };
+      i += 1;
+      continue;
     }
+
+    let j = i;
+    while (j < rawStops.length && !rawStops[j].locked) {
+      j += 1;
+    }
+
+    const block = rawStops.slice(i, j);
+    const nextAnchor =
+      j < rawStops.length
+        ? { lat: rawStops[j].lat, lon: rawStops[j].lon }
+        : finish;
+
+    const optimisedBlock = nearestNeighbour(currentPoint, block, nextAnchor);
+
+    optimisedBlock.forEach((stop, index) => {
+      ordered[i + index] = stop;
+    });
+
+    if (optimisedBlock.length) {
+      const last = optimisedBlock[optimisedBlock.length - 1];
+      currentPoint = { lat: last.lat, lon: last.lon };
+    }
+
+    i = j;
   }
 
-  return bestRoute;
+  return ordered;
 }
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: 12,
-        padding: 12,
-        background: "#f8fafc",
-      }}
-    >
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontWeight: 700, fontSize: 18 }}>{value}</div>
-    </div>
-  );
+function buildGoogleMapsUrl(
+  startPostcode: string,
+  finishPostcode: string,
+  orderedStops: OrderedStop[]
+) {
+  const origin = encodeURIComponent(startPostcode);
+  const destination = encodeURIComponent(finishPostcode);
+  const waypoints = orderedStops.map((s) => encodeURIComponent(s.postcode)).join("|");
+
+  return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving&waypoints=${waypoints}`;
 }
 
-function makeNumberIcon(number: number, locked = false, specialLabel?: string) {
-  const background = specialLabel
-    ? "#111827"
-    : locked
-    ? "#f59e0b"
-    : getPinColour(number - 1);
-  const label = specialLabel || String(number);
+function FitToRoute({
+  points,
+}: {
+  points: Array<{ lat: number; lon: number }>;
+}) {
+  const map = useMap();
 
+  useEffect(() => {
+    if (!points.length) return;
+    const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lon] as [number, number]));
+    map.fitBounds(bounds, { padding: [40, 40] });
+  }, [map, points]);
+
+  return null;
+}
+
+function numberedIcon(number: number, colour: string, locked: boolean) {
   return L.divIcon({
     className: "",
-    html: `<div style="
-      width: 28px;
-      height: 28px;
-      border-radius: 999px;
-      background: ${background};
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 12px;
-      border: 3px solid white;
-      box-shadow: 0 2px 6px rgba(15,23,42,0.25);
-    ">${label}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    html: `
+      <div style="
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background:${colour};
+        color:white;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:700;
+        font-size:13px;
+        border:2px solid white;
+        box-shadow:0 2px 8px rgba(0,0,0,0.35);
+        position:relative;
+      ">
+        ${number}
+        ${
+          locked
+            ? `<span style="
+                position:absolute;
+                right:-4px;
+                top:-4px;
+                background:#0a1b38;
+                color:#fff;
+                font-size:10px;
+                width:14px;
+                height:14px;
+                border-radius:50%;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                border:1px solid #fff;
+              ">🔒</span>`
+            : ""
+        }
+      </div>
+    `,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
   });
 }
 
-function RouteMapPreview({
-  route,
-  startStop,
-}: {
-  route: GeoStop[];
-  startStop: GeoStop | null;
-}) {
-  const linePositions = route.map(
-    (stop) => [stop.lat, stop.lon] as [number, number]
-  );
-  const allPoints = [
-    ...(startStop ? [[startStop.lat, startStop.lon] as [number, number]] : []),
-    ...linePositions,
-  ];
-
-  if (!route.length) {
-    return (
-      <p style={{ color: "#64748b" }}>Build a route to see the map preview.</p>
-    );
-  }
-
-  const center = allPoints[Math.floor(allPoints.length / 2)];
-
-  return (
-    <div>
-      <div style={{ marginBottom: 10, color: "#64748b", fontSize: 13 }}>
-        Numbered pins match the job order. Locked stops show a lock.
-      </div>
-      <div
-        style={{
-          border: "1px solid #e2e8f0",
-          borderRadius: 16,
-          overflow: "hidden",
-        }}
-      >
-        <MapContainer
-          center={center}
-          zoom={10}
-          style={{ height: 320, width: "100%" }}
-          scrollWheelZoom={false}
-        >
-          <TileLayer
-            attribution="&copy; OpenStreetMap contributors"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          {startStop ? (
-            <Marker
-              position={[startStop.lat, startStop.lon]}
-              icon={makeNumberIcon(0, false, "S")}
-            >
-              <Tooltip
-                direction="top"
-                offset={[0, -12]}
-                opacity={1}
-                permanent={false}
-              >
-                Start: {startStop.postcode}
-              </Tooltip>
-            </Marker>
-          ) : null}
-
-          <Polyline
-            positions={allPoints}
-            pathOptions={{ color: "#475569", weight: 4, dashArray: "6 8" }}
-          />
-
-          {route.map((stop, index) => (
-            <Marker
-              key={`${stop.postcode}-${index}`}
-              position={[stop.lat, stop.lon]}
-              icon={makeNumberIcon(index + 1, !!stop.locked)}
-            >
-              <Tooltip
-                direction="top"
-                offset={[0, -12]}
-                opacity={1}
-                permanent={false}
-              >
-                {stop.locked ? "🔒 " : ""}
-                {index + 1}. {stop.postcode}
-              </Tooltip>
-            </Marker>
-          ))}
-        </MapContainer>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
-  const [rows, setRows] = useState<StopRow[]>(createEmptyRows());
-  const [pasteInput, setPasteInput] = useState("");
-
-  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([
-    { name: "Office", postcode: "CV6 4AZ" },
-  ]);
-
-  const [selectedStart, setSelectedStart] = useState("");
-  const [manualStartPostcode, setManualStartPostcode] = useState("");
-
-  const [selectedFinish, setSelectedFinish] = useState("");
-  const [manualFinishPostcode, setManualFinishPostcode] = useState("");
-
-  const [newSavedName, setNewSavedName] = useState("");
-  const [newSavedPostcode, setNewSavedPostcode] = useState("");
-
-  const [dayStartTime, setDayStartTime] = useState("08:00");
-
-  const [route, setRoute] = useState<GeoStop[]>([]);
-  const [mapStartStop, setMapStartStop] = useState<GeoStop | null>(null);
-  const [legs, setLegs] = useState<RouteLeg[]>([]);
-  const [totalMiles, setTotalMiles] = useState<number | null>(null);
-  const [totalTravelMinutes, setTotalTravelMinutes] = useState<number | null>(
-    null
+  const [stops, setStops] = useState<StopRow[]>(() =>
+    typeof window !== "undefined"
+      ? loadJSON(STORAGE_STOPS, createStopRows())
+      : createStopRows()
   );
-  const [optimiseSeed, setOptimiseSeed] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>(() =>
+    typeof window !== "undefined" ? loadJSON(STORAGE_SAVED, []) : []
+  );
+  const [startMode, setStartMode] = useState<string>(() =>
+    typeof window !== "undefined" ? localStorage.getItem(STORAGE_START) || "manual" : "manual"
+  );
+  const [finishMode, setFinishMode] = useState<string>(() =>
+    typeof window !== "undefined" ? localStorage.getItem(STORAGE_FINISH) || "manual" : "manual"
+  );
+  const [startPostcode, setStartPostcode] = useState(DEFAULT_START);
+  const [finishPostcode, setFinishPostcode] = useState(DEFAULT_FINISH);
+  const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationPostcode, setNewLocationPostcode] = useState("");
+  const [pastedPostcodes, setPastedPostcodes] = useState("CV6 4AZ, CV5 6EE, LE10 3JE");
+  const [firstJobTime, setFirstJobTime] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem(STORAGE_TIME) || "08:00" : "08:00"
+  );
 
-  const currentStartPostcode = selectedStart
-    ? savedLocations.find((s) => s.name === selectedStart)?.postcode || ""
-    : cleanPostcode(manualStartPostcode);
+  const [orderedStops, setOrderedStops] = useState<OrderedStop[]>([]);
+  const [summary, setSummary] = useState<RouteSummary | null>(null);
+  const [mapPoints, setMapPoints] = useState<Array<{ lat: number; lon: number; label: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("Add your postcodes and click Build route.");
+  const [draggedId, setDraggedId] = useState<string | null>(null);
 
-  const currentFinishPostcode = selectedFinish
-    ? savedLocations.find((s) => s.name === selectedFinish)?.postcode || ""
-    : cleanPostcode(manualFinishPostcode);
+  useEffect(() => {
+    saveJSON(STORAGE_STOPS, stops);
+  }, [stops]);
 
-  const filledRows = useMemo(() => {
-    return rows.filter((row) => cleanPostcode(row.postcode)).length;
-  }, [rows]);
+  useEffect(() => {
+    saveJSON(STORAGE_SAVED, savedLocations);
+  }, [savedLocations]);
 
-  const longestLegMinutes = useMemo(() => {
-    if (!legs.length) return 0;
-    return Math.max(...legs.map((leg) => leg.travelMinutes));
-  }, [legs]);
+  useEffect(() => {
+    localStorage.setItem(STORAGE_START, startMode);
+  }, [startMode]);
 
-  const routeSummary = useMemo(() => {
-    const travel = totalTravelMinutes || 0;
-    return {
-      stops: route.length,
-      totalTravel: travel,
-      longestLeg: longestLegMinutes,
-    };
-  }, [route.length, totalTravelMinutes, longestLegMinutes]);
+  useEffect(() => {
+    localStorage.setItem(STORAGE_FINISH, finishMode);
+  }, [finishMode]);
 
-  function updateRow(
-    index: number,
-    key: keyof StopRow,
-    value: string | boolean
-  ) {
-    setRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, [key]: value } : row))
+  useEffect(() => {
+    localStorage.setItem(STORAGE_TIME, firstJobTime);
+  }, [firstJobTime]);
+
+  const startResolved = useMemo(() => {
+    if (startMode === "manual") return cleanPostcode(startPostcode);
+    const saved = savedLocations.find((loc) => loc.id === startMode);
+    return saved ? cleanPostcode(saved.postcode) : cleanPostcode(startPostcode);
+  }, [startMode, startPostcode, savedLocations]);
+
+  const finishResolved = useMemo(() => {
+    if (finishMode === "manual") return cleanPostcode(finishPostcode);
+    const saved = savedLocations.find((loc) => loc.id === finishMode);
+    return saved ? cleanPostcode(saved.postcode) : cleanPostcode(finishPostcode);
+  }, [finishMode, finishPostcode, savedLocations]);
+
+  const filledStopsCount = stops.filter((s) => cleanPostcode(s.postcode)).length;
+
+  const handleStopChange = (id: string, value: string) => {
+    setStops((current) =>
+      current.map((stop) =>
+        stop.id === id ? { ...stop, postcode: value.toUpperCase() } : stop
+      )
     );
-  }
+  };
 
-  function moveRow(fromIndex: number, toIndex: number) {
-    setRows((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      return next;
-    });
-  }
+  const handleLockChange = (id: string) => {
+    setStops((current) =>
+      current.map((stop) =>
+        stop.id === id ? { ...stop, locked: !stop.locked } : stop
+      )
+    );
+  };
 
-  function addRow() {
-    if (rows.length >= MAX_STOPS) return;
-    setRows((prev) => [...prev, { postcode: "", locked: false }]);
-  }
+  const addStop = () => {
+    if (stops.length >= MAX_STOPS) return;
+    setStops((current) => [...current, { id: uid(), postcode: "", locked: false }]);
+  };
 
-  function removeRow(index: number) {
-    if (rows.length <= 2) return;
-    setRows((prev) => prev.filter((_, i) => i !== index));
-  }
+  const removeStop = (id: string) => {
+    setStops((current) => current.filter((stop) => stop.id !== id));
+  };
 
-  function applyPastedPostcodes() {
-    const parsed = splitPastedPostcodes(pasteInput).slice(0, MAX_STOPS);
-    if (!parsed.length) return;
-
-    const nextRows = parsed.map((postcode) => ({
+  const applyPastedPostcodes = () => {
+    const pasted = splitPastedPostcodes(pastedPostcodes).slice(0, MAX_STOPS);
+    const rebuilt = pasted.map((postcode) => ({
+      id: uid(),
       postcode,
       locked: false,
     }));
-
-    while (nextRows.length < 4) {
-      nextRows.push({ postcode: "", locked: false });
+    while (rebuilt.length < Math.min(4, MAX_STOPS)) {
+      rebuilt.push({ id: uid(), postcode: "", locked: false });
     }
+    setStops(rebuilt);
+  };
 
-    setRows(nextRows);
-    setPasteInput("");
-  }
-
-  function savePostcode() {
-    const name = newSavedName.trim();
-    const postcode = cleanPostcode(newSavedPostcode);
-
+  const saveLocation = () => {
+    const name = newLocationName.trim();
+    const postcode = cleanPostcode(newLocationPostcode);
     if (!name || !postcode) return;
 
-    setSavedLocations((prev) => {
-      const withoutSame = prev.filter(
-        (item) => item.name.toLowerCase() !== name.toLowerCase()
-      );
-      return [...withoutSame, { name, postcode }];
+    setSavedLocations((current) => [
+      ...current,
+      {
+        id: uid(),
+        name,
+        postcode,
+      },
+    ]);
+
+    setNewLocationName("");
+    setNewLocationPostcode("");
+  };
+
+  const clearRoute = () => {
+    setOrderedStops([]);
+    setSummary(null);
+    setMapPoints([]);
+    setMessage("Add your postcodes and click Build route.");
+  };
+
+  const copyOrder = async () => {
+    if (!orderedStops.length) return;
+    const text = orderedStops
+      .map(
+        (stop) =>
+          `${stop.orderNumber}. ${stop.postcode} - ${stop.arrivalTime} (${formatDuration(
+            stop.travelMinutesFromPrevious
+          )})`
+      )
+      .join("\n");
+
+    await navigator.clipboard.writeText(text);
+    setMessage("Suggested order copied to clipboard.");
+  };
+
+  const openInGoogleMaps = () => {
+    if (!orderedStops.length) return;
+    const url = buildGoogleMapsUrl(startResolved, finishResolved, orderedStops);
+    window.open(url, "_blank");
+  };
+
+  const onDragStart = (id: string) => {
+    setDraggedId(id);
+  };
+
+  const onDrop = (targetId: string) => {
+    if (!draggedId || draggedId === targetId) return;
+
+    setStops((current) => {
+      const fromIndex = current.findIndex((s) => s.id === draggedId);
+      const toIndex = current.findIndex((s) => s.id === targetId);
+      if (fromIndex === -1 || toIndex === -1) return current;
+      const copy = [...current];
+      const [moved] = copy.splice(fromIndex, 1);
+      copy.splice(toIndex, 0, moved);
+      return copy;
     });
 
-    setNewSavedName("");
-    setNewSavedPostcode("");
-  }
+    setDraggedId(null);
+  };
 
-  async function runOptimiser(seed: number) {
-    setLoading(true);
-    setError("");
-
+  const buildRoute = async () => {
     try {
-      const cleanedRows = rows
-        .map((row, index) => ({
-          rowIndex: index,
-          postcode: cleanPostcode(row.postcode),
-          locked: row.locked,
-        }))
-        .filter((row) => row.postcode);
+      setBusy(true);
+      setMessage("Building route...");
 
-      const uniqueRows = cleanedRows.filter(
-        (row, index, arr) =>
-          arr.findIndex((x) => x.postcode === row.postcode) === index
+      const enteredStops = stops
+        .map((stop, index) => ({
+          ...stop,
+          postcode: cleanPostcode(stop.postcode),
+          inputIndex: index,
+        }))
+        .filter((stop) => stop.postcode);
+
+      if (!startResolved) {
+        throw new Error("Please enter a start postcode.");
+      }
+
+      if (!finishResolved) {
+        throw new Error("Please enter a finish postcode.");
+      }
+
+      if (!enteredStops.length) {
+        throw new Error("Please add at least one job postcode.");
+      }
+
+      const cache = loadJSON<Record<string, { lat: number; lon: number }>>(STORAGE_CACHE, {});
+
+      const uniquePostcodes = Array.from(
+        new Set([startResolved, finishResolved, ...enteredStops.map((s) => s.postcode)])
       );
 
-      if (uniqueRows.length < 2) {
-        throw new Error("Add at least 2 job postcodes.");
+      for (const postcode of uniquePostcodes) {
+        await geocodePostcode(postcode, cache);
       }
 
-      if (uniqueRows.length > MAX_STOPS) {
-        throw new Error(`Please keep job postcodes to ${MAX_STOPS} or fewer.`);
-      }
+      const startGeo = { ...cache[startResolved], label: "Start", postcode: startResolved };
+      const finishGeo = { ...cache[finishResolved], label: "Finish", postcode: finishResolved };
 
-      const lookups = [
-        ...new Set(
-          [
-            currentStartPostcode,
-            currentFinishPostcode,
-            ...uniqueRows.map((row) => row.postcode),
-          ].filter(Boolean)
-        ),
+      const geoStops: GeoPoint[] = enteredStops.map((stop) => ({
+        id: stop.id,
+        postcode: stop.postcode,
+        lat: cache[stop.postcode].lat,
+        lon: cache[stop.postcode].lon,
+        locked: stop.locked,
+        inputIndex: stop.inputIndex,
+      }));
+
+      const orderedGeoStops = optimiseWithLockedStops(
+        geoStops,
+        { lat: startGeo.lat, lon: startGeo.lon },
+        { lat: finishGeo.lat, lon: finishGeo.lon }
+      );
+
+      let runningTime = firstJobTime;
+      let prevPoint = startGeo;
+      let totalMiles = 0;
+      let totalTravelMinutes = 0;
+      let longestDriveMinutes = 0;
+
+      const builtOrderedStops: OrderedStop[] = orderedGeoStops.map((stop, index) => {
+        const legMiles = haversineMiles(prevPoint, stop);
+        const legMinutes = estimateTravelMinutes(legMiles);
+        totalMiles += legMiles;
+        totalTravelMinutes += legMinutes;
+        longestDriveMinutes = Math.max(longestDriveMinutes, legMinutes);
+
+        runningTime = addMinutes(runningTime, legMinutes);
+
+        const built: OrderedStop = {
+          ...stop,
+          orderNumber: index + 1,
+          arrivalTime: runningTime,
+          distanceMilesFromPrevious: Number(legMiles.toFixed(1)),
+          travelMinutesFromPrevious: legMinutes,
+        };
+
+        prevPoint = stop;
+        return built;
+      });
+
+      const lastLegMiles = haversineMiles(prevPoint, finishGeo);
+      const lastLegMinutes = estimateTravelMinutes(lastLegMiles);
+      totalMiles += lastLegMiles;
+      totalTravelMinutes += lastLegMinutes;
+      longestDriveMinutes = Math.max(longestDriveMinutes, lastLegMinutes);
+
+      const allMapPoints = [
+        { lat: startGeo.lat, lon: startGeo.lon, label: "Start" },
+        ...builtOrderedStops.map((s) => ({
+          lat: s.lat,
+          lon: s.lon,
+          label: s.postcode,
+        })),
+        { lat: finishGeo.lat, lon: finishGeo.lon, label: "Finish" },
       ];
 
-      const geocoded = await Promise.all(
-        lookups.map((pc) => geocodePostcode(pc))
-      );
-      const byPostcode = new Map(geocoded.map((item) => [item.postcode, item]));
-
-      const startStop = currentStartPostcode
-        ? byPostcode.get(currentStartPostcode) || null
-        : null;
-
-      const finishStop = currentFinishPostcode
-        ? byPostcode.get(currentFinishPostcode) || null
-        : null;
-
-      const jobs: GeoStop[] = uniqueRows
-        .map((row, index) => {
-          const base = byPostcode.get(row.postcode);
-          if (!base) return null;
-
-          return {
-            ...base,
-            locked: row.locked,
-            rowIndex: index,
-          };
-        })
-        .filter(Boolean) as GeoStop[];
-
-      const jobsWithoutStartFinish = jobs.filter(
-        (job) =>
-          job.postcode !== currentStartPostcode &&
-          job.postcode !== currentFinishPostcode
-      );
-
-      const orderedJobs = buildBestJobOrder(
-        jobsWithoutStartFinish,
-        startStop,
-        finishStop,
-        seed
-      );
-
-      const finalRoute = [...orderedJobs, ...(finishStop ? [finishStop] : [])];
-
-      const routeStart = finalRoute[0];
-      const computedLegs: RouteLeg[] = [];
-
-      if (routeStart && startStop) {
-        computedLegs.push(await getDriveLeg(startStop, routeStart));
-      }
-
-      for (let i = 1; i < finalRoute.length; i += 1) {
-        const leg = await getDriveLeg(finalRoute[i - 1], finalRoute[i]);
-        computedLegs.push(leg);
-      }
-
-      const miles = computedLegs.reduce(
-        (sum, leg) => sum + leg.distanceMiles,
-        0
-      );
-      const minutes = computedLegs.reduce(
-        (sum, leg) => sum + leg.travelMinutes,
-        0
-      );
-
-      setRoute(finalRoute);
-      setMapStartStop(startStop);
-      setLegs(computedLegs);
-      setTotalMiles(miles);
-      setTotalTravelMinutes(minutes);
-      setOptimiseSeed(seed);
-    } catch (err: any) {
-      setRoute([]);
-      setMapStartStop(null);
-      setLegs([]);
-      setTotalMiles(null);
-      setTotalTravelMinutes(null);
-      setError(err.message || "Something went wrong.");
+      setOrderedStops(builtOrderedStops);
+      setSummary({
+        totalMiles: Number(totalMiles.toFixed(1)),
+        totalTravelMinutes,
+        longestDriveMinutes,
+        legsCount: builtOrderedStops.length + 1,
+      });
+      setMapPoints(allMapPoints);
+      setMessage("Route built successfully.");
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "Failed to build route.";
+      setMessage(text);
+      setOrderedStops([]);
+      setSummary(null);
+      setMapPoints([]);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }
-
-  function buildRoute() {
-    runOptimiser(1);
-  }
-
-  function reOptimiseRoute() {
-    runOptimiser(optimiseSeed + 7);
-  }
-
-  async function copyOrder() {
-    if (!route.length) return;
-    const lines = route.map((stop, index) => `${index + 1}. ${stop.postcode}`);
-    await navigator.clipboard.writeText(lines.join("\n"));
-  }
-
-  function clearAll() {
-    setRows(createEmptyRows());
-    setPasteInput("");
-    setSelectedStart("");
-    setSelectedFinish("");
-    setManualStartPostcode("");
-    setManualFinishPostcode("");
-    setNewSavedName("");
-    setNewSavedPostcode("");
-    setDayStartTime("08:00");
-    setRoute([]);
-    setMapStartStop(null);
-    setLegs([]);
-    setTotalMiles(null);
-    setTotalTravelMinutes(null);
-    setError("");
-    setDragIndex(null);
-  }
+  };
 
   return (
-    <div
-      style={{
-        fontFamily: "Arial, sans-serif",
-        padding: 24,
-        maxWidth: 1280,
-        margin: "0 auto",
-        color: "#111827",
-        background: "#f8fafc",
-        minHeight: "100vh",
-      }}
-    >
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ marginBottom: 8 }}>Postcode Route Planner</h1>
-        <p style={{ marginTop: 0, color: "#64748b" }}>
-          Office route planning tool with stronger optimisation, drag-and-drop
-          ordering, locked stops, saved locations, numbered map pins, and travel
-          times.
-        </p>
-      </div>
+    <div className="planner-page">
+      <div className="planner-shell">
+        <div className="planner-header">
+          <h1>Postcode Route Planner</h1>
+          <p>
+            Office route planning tool with stronger optimisation, drag-and-drop ordering,
+            locked stops, saved locations, numbered map pins, and travel times.
+          </p>
+        </div>
 
-      <div
-        style={{
-          display: "grid",
-          gap: 24,
-          gridTemplateColumns: "1.25fr 0.95fr",
-          alignItems: "start",
-        }}
-      >
-        <div
-          style={{
-            background: "#fff",
-            border: "1px solid #e2e8f0",
-            borderRadius: 18,
-            padding: 20,
-            boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
-          }}
-        >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 16,
-              marginBottom: 20,
-            }}
-          >
-            <div
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 14,
-                padding: 14,
-                background: "#f8fafc",
-              }}
-            >
-              <h3 style={{ marginTop: 0, marginBottom: 10 }}>Start postcode</h3>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: 6,
-                  fontSize: 13,
-                  color: "#64748b",
-                }}
-              >
-                Saved locations
-              </label>
-              <select
-                value={selectedStart}
-                onChange={(e) => setSelectedStart(e.target.value)}
-                style={{ width: "100%", padding: 10, marginBottom: 10 }}
-              >
-                <option value="">Manual postcode</option>
-                {savedLocations.map((item) => (
-                  <option key={`start-${item.name}`} value={item.name}>
-                    {item.name} - {item.postcode}
-                  </option>
-                ))}
-              </select>
-
-              {!selectedStart && (
-                <input
-                  value={manualStartPostcode}
-                  onChange={(e) => setManualStartPostcode(e.target.value)}
-                  placeholder="CV6 4AZ"
-                  style={{
-                    width: "100%",
-                    padding: 10,
-                    boxSizing: "border-box",
-                  }}
-                />
-              )}
-            </div>
-
-            <div
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 14,
-                padding: 14,
-                background: "#f8fafc",
-              }}
-            >
-              <h3 style={{ marginTop: 0, marginBottom: 10 }}>
-                Finish postcode
-              </h3>
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: 6,
-                  fontSize: 13,
-                  color: "#64748b",
-                }}
-              >
-                Saved locations
-              </label>
-              <select
-                value={selectedFinish}
-                onChange={(e) => setSelectedFinish(e.target.value)}
-                style={{ width: "100%", padding: 10, marginBottom: 10 }}
-              >
-                <option value="">Manual postcode</option>
-                {savedLocations.map((item) => (
-                  <option key={`finish-${item.name}`} value={item.name}>
-                    {item.name} - {item.postcode}
-                  </option>
-                ))}
-              </select>
-
-              {!selectedFinish && (
-                <input
-                  value={manualFinishPostcode}
-                  onChange={(e) => setManualFinishPostcode(e.target.value)}
-                  placeholder="LE10 3JE"
-                  style={{
-                    width: "100%",
-                    padding: 10,
-                    boxSizing: "border-box",
-                  }}
-                />
-              )}
-            </div>
-          </div>
-
-          <div
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 14,
-              padding: 14,
-              marginBottom: 20,
-              background: "#f8fafc",
-            }}
-          >
-            <div style={{ marginBottom: 10, fontWeight: 700 }}>
-              Saved locations
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr auto",
-                gap: 8,
-              }}
-            >
-              <input
-                value={newSavedName}
-                onChange={(e) => setNewSavedName(e.target.value)}
-                placeholder="Name"
-                style={{ padding: 10 }}
-              />
-              <input
-                value={newSavedPostcode}
-                onChange={(e) => setNewSavedPostcode(e.target.value)}
-                placeholder="Postcode"
-                style={{ padding: 10 }}
-              />
-              <button onClick={savePostcode} style={{ padding: "10px 14px" }}>
-                Save postcode
-              </button>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 180px",
-              gap: 16,
-              marginBottom: 20,
-            }}
-          >
-            <div
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 14,
-                padding: 14,
-                background: "#f8fafc",
-              }}
-            >
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: 6,
-                  fontWeight: 700,
-                }}
-              >
-                Quick paste postcodes
-              </label>
-              <textarea
-                value={pasteInput}
-                onChange={(e) => setPasteInput(e.target.value)}
-                placeholder={"CV6 4AZ, CV5 6EE, LE10 3JE"}
-                rows={3}
-                style={{ width: "100%", padding: 10, boxSizing: "border-box" }}
-              />
-              <div style={{ marginTop: 8 }}>
-                <button
-                  onClick={applyPastedPostcodes}
-                  style={{ padding: "10px 14px" }}
+        <div className="planner-grid">
+          <div className="planner-left">
+            <div className="panel two-up">
+              <div className="sub-panel">
+                <h3>Start postcode</h3>
+                <label>Saved locations</label>
+                <select
+                  value={startMode}
+                  onChange={(e) => setStartMode(e.target.value)}
                 >
+                  <option value="manual">Manual postcode</option>
+                  {savedLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  value={startMode === "manual" ? startPostcode : startResolved}
+                  onChange={(e) => setStartPostcode(e.target.value)}
+                  disabled={startMode !== "manual"}
+                  placeholder="Enter start postcode"
+                />
+              </div>
+
+              <div className="sub-panel">
+                <h3>Finish postcode</h3>
+                <label>Saved locations</label>
+                <select
+                  value={finishMode}
+                  onChange={(e) => setFinishMode(e.target.value)}
+                >
+                  <option value="manual">Manual postcode</option>
+                  {savedLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  value={finishMode === "manual" ? finishPostcode : finishResolved}
+                  onChange={(e) => setFinishPostcode(e.target.value)}
+                  disabled={finishMode !== "manual"}
+                  placeholder="Enter finish postcode"
+                />
+              </div>
+            </div>
+
+            <div className="panel">
+              <h3>Saved locations</h3>
+              <div className="inline-form">
+                <input
+                  placeholder="Name"
+                  value={newLocationName}
+                  onChange={(e) => setNewLocationName(e.target.value)}
+                />
+                <input
+                  placeholder="Postcode"
+                  value={newLocationPostcode}
+                  onChange={(e) => setNewLocationPostcode(e.target.value.toUpperCase())}
+                />
+                <button className="btn-primary" onClick={saveLocation}>
+                  Save postcode
+                </button>
+              </div>
+            </div>
+
+            <div className="panel paste-time-grid">
+              <div>
+                <h3>Quick paste postcodes</h3>
+                <textarea
+                  value={pastedPostcodes}
+                  onChange={(e) => setPastedPostcodes(e.target.value)}
+                  rows={4}
+                />
+                <button className="btn-primary" onClick={applyPastedPostcodes}>
                   Apply pasted postcodes
                 </button>
               </div>
-            </div>
 
-            <div
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 14,
-                padding: 14,
-                background: "#f8fafc",
-              }}
-            >
-              <label
-                style={{
-                  display: "block",
-                  marginBottom: 6,
-                  fontWeight: 700,
-                }}
-              >
-                First job time
-              </label>
-              <input
-                type="time"
-                value={dayStartTime}
-                onChange={(e) => setDayStartTime(e.target.value)}
-                style={{ width: "100%", padding: 10, boxSizing: "border-box" }}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginBottom: 10 }}>
-            <h3 style={{ marginBottom: 6 }}>Job postcodes</h3>
-            <p style={{ marginTop: 0, color: "#64748b", fontSize: 14 }}>
-              Drag and drop stops to reorder them manually. Lock a stop if it
-              must stay in that position.
-            </p>
-          </div>
-
-          <div style={{ display: "grid", gap: 10 }}>
-            {rows.map((row, index) => (
-              <div
-                key={index}
-                draggable
-                onDragStart={() => setDragIndex(index)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => {
-                  if (dragIndex === null || dragIndex === index) return;
-                  moveRow(dragIndex, index);
-                  setDragIndex(null);
-                }}
-                onDragEnd={() => setDragIndex(null)}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "44px 72px 1fr 92px 92px",
-                  gap: 10,
-                  alignItems: "center",
-                  border: row.locked
-                    ? "2px solid #f59e0b"
-                    : dragIndex === index
-                    ? "2px solid #94a3b8"
-                    : "1px solid #e2e8f0",
-                  borderRadius: 12,
-                  padding: 10,
-                  background: row.locked
-                    ? "#fef3c7"
-                    : dragIndex === index
-                    ? "#f8fafc"
-                    : "#fff",
-                }}
-              >
-                <div
-                  title="Drag to reorder"
-                  style={{
-                    cursor: "grab",
-                    textAlign: "center",
-                    color: "#64748b",
-                    fontSize: 18,
-                    userSelect: "none",
-                  }}
-                >
-                  ⋮⋮
-                </div>
-
-                <div style={{ fontSize: 14, fontWeight: 600 }}>
-                  Stop {index + 1}
-                </div>
-
+              <div className="time-box">
+                <h3>First job time</h3>
                 <input
-                  value={row.postcode}
-                  onChange={(e) => updateRow(index, "postcode", e.target.value)}
-                  placeholder="Enter postcode"
-                  style={{ padding: 10 }}
+                  type="time"
+                  value={firstJobTime}
+                  onChange={(e) => setFirstJobTime(e.target.value)}
                 />
+              </div>
+            </div>
 
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 14,
-                    justifyContent: "center",
-                    fontWeight: row.locked ? 700 : 400,
-                  }}
+            <div className="jobs-header">
+              <div>
+                <h2>Job postcodes</h2>
+                <p>
+                  Drag and drop stops to reorder them manually. Lock a stop if it must
+                  stay in that position.
+                </p>
+              </div>
+            </div>
+
+            <div className="stops-list">
+              {stops.map((stop, index) => (
+                <div
+                  key={stop.id}
+                  className="stop-row"
+                  draggable
+                  onDragStart={() => onDragStart(stop.id)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => onDrop(stop.id)}
                 >
+                  <div className="drag-handle">⋮⋮</div>
+                  <div className="stop-label">Stop {index + 1}</div>
                   <input
-                    type="checkbox"
-                    checked={row.locked}
-                    onChange={(e) =>
-                      updateRow(index, "locked", e.target.checked)
-                    }
+                    value={stop.postcode}
+                    onChange={(e) => handleStopChange(stop.id, e.target.value)}
+                    placeholder="Enter postcode"
                   />
-                  Lock
-                </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={stop.locked}
+                      onChange={() => handleLockChange(stop.id)}
+                    />
+                    Lock
+                  </label>
+                  <button className="btn-secondary" onClick={() => removeStop(stop.id)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
 
-                <button
-                  onClick={() => removeRow(index)}
-                  disabled={rows.length <= 2}
-                  style={{ padding: "10px 12px" }}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div
-            style={{
-              marginTop: 14,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <button
-              onClick={addRow}
-              disabled={rows.length >= MAX_STOPS}
-              style={{ padding: "10px 14px" }}
-            >
-              Add stop
-            </button>
-            <button
-              onClick={buildRoute}
-              disabled={loading}
-              style={{ padding: "10px 14px" }}
-            >
-              {loading ? "Calculating..." : "Build route"}
-            </button>
-            <button
-              onClick={reOptimiseRoute}
-              disabled={loading || !route.length}
-              style={{ padding: "10px 14px" }}
-            >
-              Re-optimise route
-            </button>
-            <button
-              onClick={copyOrder}
-              disabled={!route.length}
-              style={{ padding: "10px 14px" }}
-            >
-              Copy order
-            </button>
-            <button onClick={clearAll} style={{ padding: "10px 14px" }}>
-              Clear
-            </button>
-          </div>
-
-          <p style={{ color: "#64748b", marginTop: 12 }}>
-            {filledRows} filled job postcode{filledRows === 1 ? "" : "s"} ·
-            Travel times include a 15% planning buffer.
-          </p>
-
-          {error && (
-            <p style={{ color: "#dc2626", fontWeight: 700 }}>{error}</p>
-          )}
-        </div>
-
-        <div style={{ display: "grid", gap: 20 }}>
-          <div
-            style={{
-              background: "#fff",
-              border: "1px solid #e2e8f0",
-              borderRadius: 18,
-              padding: 20,
-              boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Route summary</h3>
-
-            {route.length ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 10,
-                }}
+            <div className="action-row">
+              <button
+                className="btn-secondary"
+                onClick={addStop}
+                disabled={stops.length >= MAX_STOPS}
               >
-                <StatCard label="Stops" value={routeSummary.stops} />
-                <StatCard
-                  label="Total travel time"
-                  value={formatDuration(routeSummary.totalTravel)}
-                />
-                <StatCard
-                  label="Total miles"
-                  value={(totalMiles || 0).toFixed(1)}
-                />
-                <StatCard
-                  label="Longest drive"
-                  value={formatDuration(routeSummary.longestLeg)}
-                />
-              </div>
-            ) : (
-              <p style={{ color: "#64748b" }}>
-                Build a route to see the summary.
-              </p>
-            )}
+                Add stop
+              </button>
+              <button className="btn-primary" onClick={buildRoute} disabled={busy}>
+                {busy ? "Building..." : "Build route"}
+              </button>
+              <button className="btn-secondary" onClick={buildRoute} disabled={busy}>
+                Re-optimise route
+              </button>
+              <button className="btn-secondary" onClick={copyOrder} disabled={!orderedStops.length}>
+                Copy order
+              </button>
+              <button className="btn-secondary" onClick={openInGoogleMaps} disabled={!orderedStops.length}>
+                Open in Google Maps
+              </button>
+              <button className="btn-secondary" onClick={clearRoute}>
+                Clear
+              </button>
+            </div>
+
+            <div className="route-note">
+              {filledStopsCount} filled job postcodes · Travel times include a 15% planning buffer.
+            </div>
           </div>
 
-          <div
-            style={{
-              background: "#fff",
-              border: "1px solid #e2e8f0",
-              borderRadius: 18,
-              padding: 20,
-              boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Map preview</h3>
-            <RouteMapPreview route={route} startStop={mapStartStop} />
-          </div>
+          <div className="planner-right">
+            <div className="panel">
+              <h2>Route summary</h2>
+              {summary ? (
+                <div className="summary-grid">
+                  <div className="summary-card">
+                    <span>Stops</span>
+                    <strong>{orderedStops.length + 1}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span>Total travel time</span>
+                    <strong>{formatDuration(summary.totalTravelMinutes)}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span>Total miles</span>
+                    <strong>{summary.totalMiles}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span>Longest drive</span>
+                    <strong>{formatDuration(summary.longestDriveMinutes)}</strong>
+                  </div>
+                </div>
+              ) : (
+                <p>{message}</p>
+              )}
+            </div>
 
-          <div
-            style={{
-              background: "#fff",
-              border: "1px solid #e2e8f0",
-              borderRadius: 18,
-              padding: 20,
-              boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Suggested order</h3>
+            <div className="panel">
+              <h2>Map preview</h2>
+              <p>Numbered pins match the job order. Locked stops show a lock.</p>
 
-            {route.length ? (
-              <div style={{ display: "grid", gap: 12 }}>
-                {route.map((stop, index) => {
-                  const previousLeg = legs[index];
-                  const colour = previousLeg
-                    ? getTravelColour(previousLeg.travelMinutes)
-                    : "#111827";
-                  const isFinish =
-                    !!currentFinishPostcode && index === route.length - 1;
-                  const isLocked = rows.some(
-                    (row) =>
-                      row.locked &&
-                      cleanPostcode(row.postcode) === stop.postcode
-                  );
+              <div className="map-wrap">
+                <MapContainer
+                  center={[52.4068, -1.5197]}
+                  zoom={10}
+                  style={{ height: "100%", width: "100%" }}
+                >
+                  <TileLayer
+                    attribution='&copy; OpenStreetMap contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
 
-                  return (
-                    <div key={`${stop.postcode}-${index}`}>
-                      {previousLeg && (
-                        <div
-                          style={{
-                            margin: "0 0 8px 52px",
-                            color: colour,
-                            fontWeight: 700,
-                          }}
-                        >
-                          Travel time {Math.round(previousLeg.travelMinutes)}{" "}
-                          min
-                        </div>
-                      )}
+                  {mapPoints.length > 0 && (
+                    <>
+                      <FitToRoute points={mapPoints} />
+                      <Polyline
+                        positions={mapPoints.map((p) => [p.lat, p.lon])}
+                        pathOptions={{ color: "#6cc04a", weight: 4, opacity: 0.8 }}
+                      />
+                    </>
+                  )}
 
-                      <div
-                        style={{
-                          border: isLocked
-                            ? "2px solid #f59e0b"
-                            : "1px solid #e2e8f0",
-                          borderRadius: 14,
-                          padding: 12,
-                          display: "flex",
-                          gap: 12,
-                          alignItems: "flex-start",
-                          background: isLocked ? "#fef3c7" : "#fff",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: 34,
-                            height: 34,
-                            borderRadius: 999,
-                            background: isLocked ? "#f59e0b" : "#111827",
-                            color: "#fff",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 14,
-                            flexShrink: 0,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {index + 1}
-                        </div>
-
+                  {orderedStops.map((stop, index) => (
+                    <Marker
+                      key={stop.id}
+                      position={[stop.lat, stop.lon]}
+                      icon={numberedIcon(index + 1, getPinColour(index), stop.locked)}
+                    >
+                      <Tooltip direction="top" offset={[0, -12]} opacity={1}>
                         <div>
-                          <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                            {isLocked ? "🔒 " : ""}
-                            {stop.postcode}
-                            {isFinish ? "  • Finish" : ""}
-                            {isLocked ? "  • Locked" : ""}
-                          </div>
+                          <strong>
+                            {index + 1}. {stop.postcode}
+                          </strong>
+                          <br />
+                          Arrival: {stop.arrivalTime}
+                          <br />
+                          Travel: {formatDuration(stop.travelMinutesFromPrevious)}
+                        </div>
+                      </Tooltip>
+                    </Marker>
+                  ))}
+                </MapContainer>
+              </div>
+            </div>
 
-                          <div
-                            style={{
-                              fontSize: 13,
-                              color: "#64748b",
-                              marginBottom: 6,
-                              lineHeight: 1.4,
-                            }}
-                          >
-                            {stop.label}
+            <div className="panel">
+              <h2>Suggested order</h2>
+              {orderedStops.length ? (
+                <div className="suggested-list">
+                  {orderedStops.map((stop) => (
+                    <div key={stop.id} className="suggested-item">
+                      <div className="travel-pill" style={{ color: getTravelColour(stop.travelMinutesFromPrevious) }}>
+                        Travel time {formatDuration(stop.travelMinutesFromPrevious)}
+                      </div>
+                      <div className="suggested-main">
+                        <div className="order-badge">{stop.orderNumber}</div>
+                        <div>
+                          <div className="suggested-postcode">{stop.postcode}</div>
+                          <div className="suggested-meta">
+                            Arrive {stop.arrivalTime} · {stop.distanceMilesFromPrevious} miles
                           </div>
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p style={{ color: "#64748b" }}>
-                Add your postcodes and click Build route.
-              </p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p>Add your postcodes and click Build route.</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
