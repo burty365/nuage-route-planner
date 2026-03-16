@@ -1,90 +1,120 @@
-/* ===== NU AGE DARK THEME ===== */
+:root {
+  font-family: Arial, sans-serif;
+  color: #ffffff;
+  background-color: #071535;
+}
+
+* {
+  box-sizing: border-box;
+}
 
 body {
-  margin: 0 !important;
-  font-family: Arial, sans-serif !important;
-  background: #071535 !important;
-  color: white !important;
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #071535;
+  color: #ffffff;
 }
-
-/* main app background */
 
 #root {
-  background: #071535 !important;
-  min-height: 100vh !important;
-}
-
-/* panels */
-
-div {
-  border-radius: 12px;
-}
-
-/* cards / panels */
-
-div[class*="panel"],
-div[class*="box"],
-div[class*="card"] {
-  background: #102449 !important;
-  border: 1px solid #1a315f !important;
-}
-
-/* text */
-
-h1, h2, h3 {
-  color: white !important;
-}
-
-p, label, span, small {
-  color: #b8c4d9 !important;
-}
-
-/* inputs */
-
-input,
-select,
-textarea {
-  background: #0a1b38 !important;
-  color: white !important;
-  border: 1px solid #2a4474 !important;
-  border-radius: 10px !important;
-  padding: 10px !important;
-}
-
-input::placeholder {
-  color: #8fa3c7;
-}
-
-/* buttons */
-
-button {
-  border: none !important;
-  border-radius: 10px !important;
-  padding: 10px 16px !important;
-  cursor: pointer;
-}
-
-/* green buttons */
-
-button:hover {
-  opacity: 0.9;
+  min-height: 100vh;
+  background: #071535;
 }
 
 button,
-button:active {
-  background: #6cc04a !important;
-  color: white !important;
+input,
+select,
+textarea {
+  font: inherit;
 }
 
-/* remove buttons */
-
-button.remove,
-button[title="Remove"] {
-  background: #334766 !important;
+/* Generic cards / panels */
+.panel,
+.card,
+.box,
+.section {
+  background: #102449;
+  border: 1px solid #1a315f;
+  border-radius: 16px;
+  color: #ffffff;
 }
 
-/* checkboxes */
+/* Inputs */
+input,
+select,
+textarea {
+  background: #0a1b38;
+  color: #ffffff;
+  border: 1px solid #2a4474;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
 
-input[type="checkbox"] {
-  accent-color: #6cc04a;
+input::placeholder,
+textarea::placeholder {
+  color: #8fa3c7;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #6cc04a;
+  box-shadow: 0 0 0 3px rgba(108, 192, 74, 0.2);
+}
+
+/* Buttons */
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+/* Primary actions */
+button.build-route,
+button.primary,
+button.apply-btn,
+button.save-btn,
+button[type="button"] {
+  background: #6cc04a;
+  color: #ffffff;
+}
+
+button.build-route:hover,
+button.primary:hover,
+button.apply-btn:hover,
+button.save-btn:hover,
+button[type="button"]:hover {
+  background: #5daf3d;
+}
+
+/* Remove / secondary buttons */
+button.remove-btn,
+button.secondary {
+  background: #334766;
+  color: #ffffff;
+}
+
+button.remove-btn:hover,
+button.secondary:hover {
+  background: #40567a;
+}
+
+/* Text helpers */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: #ffffff;
+}
+
+p,
+label,
+small,
+span {
+  color: #b8c4d9;
 }
