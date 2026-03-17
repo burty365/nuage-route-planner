@@ -768,13 +768,10 @@ export default function App() {
               >
                 Add stop
               </button>
-              <button
+   <button
   className="btn-primary"
-  onClick={() => {
-    alert("Build Route clicked");
-    buildRoute();
-  }}
-  disabled={false}
+  onClick={buildRoute}
+  disabled={busy}
 >
   {busy ? "Building..." : "Build route"}
 </button>
