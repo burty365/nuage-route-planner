@@ -45,7 +45,15 @@ type RouteSummary = {
   longestDriveMinutes: number;
   legsCount: number;
 };
-
+type RouteLeg = {
+  label: string;
+  postcode: string;
+  arrivalTime?: string;
+  travelMinutesFromPrevious: number;
+  distanceMilesFromPrevious: number;
+  kind: "start" | "stop" | "finish";
+  orderNumber?: number;
+};
 const TRAFFIC_BUFFER = 1.15;
 const MAX_STOPS = 8;
 
